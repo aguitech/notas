@@ -31,9 +31,10 @@ if (is_file($csv)) {
     $input = fopen($csv, 'r');
     if (!$input) fail(500, 'No se pudo leer la libreta.');
     while (($row = fgetcsv($input, 0, ',', '"', '')) !== false) {
-        if (count($row) !== 7) fail(500, 'Hay una fila inválida en la libreta.');
+        if (!in_array(count($row), [7, 8], true)) fail(500, 'Hay una fila inválida en la libreta.');
         [$id, $title, $body, $date, $pinned, $name, $mime] = $row;
-        $notes[$id] = compact('id','title','body','date','pinned','name','mime');
+        $tasks = $row[7] ?? '[]';
+        $notes[$id] = compact('id','title','body','date','pinned','name','mime','tasks');
     }
     fclose($input);
 }
@@ -61,6 +62,24 @@ if ($post) {
     $action = $_POST['action'] ?? '';
     if ($action === 'delete' && $note) {
         unset($notes[$id]);
+    } elseif ($note && in_array($action, ['add_task', 'toggle_task', 'delete_task'], true)) {
+        $tasks = json_decode($note['tasks'], true, 512, JSON_THROW_ON_ERROR);
+        if ($action === 'add_task') {
+            $label = $_POST['task_label'] ?? '';
+            if (!is_string($label) || trim($label) === '' || strlen($label) > 800 || count($tasks) >= 100) {
+                fail(422, 'Escribe un pendiente de hasta 200 caracteres. Cada nota admite hasta 100.');
+            }
+            $tasks[bin2hex(random_bytes(16))] = ['label' => trim($label), 'done' => false];
+        } else {
+            $taskId = $_POST['task_id'] ?? '';
+            if (!is_string($taskId) || !isset($tasks[$taskId])) fail(404, 'El pendiente ya no existe.');
+            if ($action === 'delete_task') {
+                unset($tasks[$taskId]);
+            } else {
+                $tasks[$taskId]['done'] = ($_POST['done'] ?? '') === '1';
+            }
+        }
+        $notes[$id]['tasks'] = json_encode($tasks, JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE);
     } elseif ($action === 'save') {
         $title = trim((string) ($_POST['title'] ?? ''));
         $body = trim((string) ($_POST['body'] ?? ''));
@@ -80,7 +99,8 @@ if ($post) {
         $id = $id ?: bin2hex(random_bytes(16));
         $date = gmdate('Y-m-d H:i:s');
         $pinned = isset($_POST['pinned']) ? '1' : '0';
-        $notes[$id] = compact('id','title','body','date','pinned','name','mime');
+        $tasks = $note['tasks'] ?? '[]';
+        $notes[$id] = compact('id','title','body','date','pinned','name','mime','tasks');
     } else {
         fail(400, 'Acción inválida.');
     }
@@ -100,7 +120,7 @@ if ($post) {
         fail(500, 'No se pudo guardar la libreta.');
     }
     if ($previous && ($action === 'delete' || ($notes[$id]['mime'] ?? '') !== $note['mime'])) @unlink($dir . '/' . $previous . '.blob');
-    header('Location: ' . $url, true, 303);
+    header('Location: ' . $url . (str_ends_with($action, '_task') ? '&view=' . $id . '#note-' . $id : ''), true, 303);
     exit;
 }
 flock($lock, LOCK_UN);
@@ -136,9 +156,42 @@ usort($notes, fn($a, $b) => [$b['pinned'], $b['date']] <=> [$a['pinned'], $a['da
 <?php if (!$notes): ?><p class="empty">Tu libreta está vacía. Guarda tu primera nota.</p><?php endif ?>
 <p id="no-results" class="empty" hidden>Sin coincidencias.</p>
 <?php foreach ($notes as $item): $fileUrl = $url . '&file=' . $item['id']; ?>
-<article class="card">
+<article class="card" id="note-<?= e($item['id']) ?>">
 <div class="meta"><time datetime="<?= e(str_replace(' ', 'T', $item['date']) . 'Z') ?>"><?= e($item['date']) ?> UTC</time><?= $item['pinned'] === '1' ? '<span>FIJADA</span>' : '' ?></div>
 <h3><?= e($item['title']) ?></h3><p class="body"><?= e($item['body']) ?></p>
+<?php
+$tasks = json_decode($item['tasks'], true, 512, JSON_THROW_ON_ERROR);
+$done = count(array_filter($tasks, fn($task) => $task['done']));
+?>
+<details class="checklist" <?= $tasks || ($_GET['view'] ?? '') === $item['id'] ? 'open' : '' ?>>
+<summary>Pendientes<?php if ($tasks): ?> <span class="progress"><?= $done ?> de <?= count($tasks) ?> terminados</span><?php endif ?></summary>
+<?php if ($tasks): ?>
+<progress value="<?= $done ?>" max="<?= count($tasks) ?>" aria-label="Progreso de pendientes"></progress>
+<ul>
+<?php foreach ($tasks as $taskId => $task): ?>
+<li>
+<form class="task <?= $task['done'] ? 'done' : '' ?>" method="post" action="<?= e($url) ?>">
+<input type="hidden" name="csrf" value="<?= e($csrf) ?>">
+<input type="hidden" name="id" value="<?= e($item['id']) ?>">
+<input type="hidden" name="task_id" value="<?= e((string) $taskId) ?>">
+<input type="hidden" name="done" value="<?= $task['done'] ? '0' : '1' ?>">
+<button class="task-toggle" name="action" value="toggle_task" type="submit" role="checkbox" aria-checked="<?= $task['done'] ? 'true' : 'false' ?>">
+<span class="task-box" aria-hidden="true"><?= $task['done'] ? '✓' : '' ?></span>
+<span class="task-label"><?= e($task['label']) ?></span>
+</button>
+<button class="task-delete" name="action" value="delete_task" type="submit" aria-label="<?= e('Quitar ' . $task['label']) ?>" title="Quitar pendiente">×</button>
+</form>
+</li>
+<?php endforeach ?>
+</ul>
+<?php endif ?>
+<form class="task-add" method="post" action="<?= e($url) ?>">
+<input type="hidden" name="csrf" value="<?= e($csrf) ?>">
+<input type="hidden" name="id" value="<?= e($item['id']) ?>">
+<input name="task_label" required maxlength="200" placeholder="Nuevo pendiente…" aria-label="Nuevo pendiente">
+<button name="action" value="add_task">Agregar</button>
+</form>
+</details>
 <?php if ($item['name'] !== ''): ?>
 <?php if (str_starts_with($item['mime'], 'image/')): ?><img src="<?= e($fileUrl) ?>" alt="<?= e($item['name']) ?>" loading="lazy"><?php endif ?>
 <a class="attachment" href="<?= e($fileUrl . '&download=1') ?>">↓ <?= e($item['name']) ?></a>

@@ -10,3 +10,7 @@ La libreta es compartida. Cualquiera con el enlace puede leer y modificar las no
 Se admite un adjunto por nota. Las imágenes JPG, PNG, WebP y GIF tienen vista previa. También se pueden descargar PDF, TXT, CSV, ZIP, DOCX y XLSX. El servidor valida el tipo de contenido.
 
 Las notas se guardan en notes.csv en UTF-8. Respalda toda la carpeta privada para conservar el CSV y sus adjuntos juntos. Al eliminar una nota también se elimina su adjunto.
+
+## Listas de pendientes
+
+Abre **Pendientes** en cualquier nota y agrega elementos. Toca la casilla para marcar o reabrir un pendiente, y **×** para quitarlo. El indicador muestra cuántos elementos terminaste. Actualiza los archivos de la aplicación y conserva el directorio privado. Las filas originales del CSV se leen automáticamente y reciben la nueva columna al guardar.
